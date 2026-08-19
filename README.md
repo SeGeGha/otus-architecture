@@ -43,4 +43,4 @@ MVP-стратегия: сначала агрегация геоданных п�
 | Компромисс              | [`docs/trade-offs.md`](docs/trade-offs.md) |
 | C4 Level 1 — Context    | [`docs/views/c4-context.md`](docs/views/c4-context.md) |
 | C4 Level 2 — Containers | [`docs/views/c4-container.md`](docs/views/c4-container.md) |
-| Записи решений (ADR)    | `docs/adr/` |
+| Записи решений (ADR)    | [`docs/adr/`](docs/adr/) |
