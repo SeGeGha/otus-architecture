@@ -38,8 +38,9 @@ MVP-стратегия: сначала агрегация геоданных п�
 
 | Артефакт | Файл |
 |---|---|
-| Атрибуты качества | [`docs/quality-attributes.md`](docs/quality-attributes.md) |
-| Дерево полезности | [`docs/utility-tree.md`](docs/utility-tree.md) |
-| Компромисс (trade-off) | [`docs/tradeoffs.md`](docs/tradeoffs.md) |
-| Диаграммы C4 (Context + Containers) | `docs/views/` |
-| Записи решений (ADR) | `docs/adr/` |
+| Атрибуты качества       | [`docs/quality-attributes.md`](docs/quality-attributes.md) |
+| Дерево полезности       | [`docs/utility-tree.md`](docs/utility-tree.md) |
+| Компромисс              | [`docs/trade-offs.md`](docs/trade-offs.md) |
+| C4 Level 1 — Context    | [`docs/views/c4-context.md`](docs/views/c4-context.md) |
+| C4 Level 2 — Containers | [`docs/views/c4-container.md`](docs/views/c4-container.md) |
+| Записи решений (ADR)    | `docs/adr/` |
