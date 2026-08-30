@@ -18,7 +18,6 @@ flowchart TB
     end
 
     idp["🔑 Провайдер авторизации\n(OAuth2 / OIDC)"]
-    storage["📦 Файловое хранилище\n(S3 / CDN)\n(фото точек маршрута,\nэкспорт PDF)"]
 
     user -->|"HTTPS / WebSocket"| system
     admin -->|"HTTPS"| system
@@ -27,14 +26,13 @@ flowchart TB
     system -->|"REST API"| osm
     system -->|"REST API"| mapbox
     system -->|"OIDC: issuer JWT / JWKS"| idp
-    system -->|"загрузка / скачивание файлов"| storage
 
     classDef focus fill:#1168bd,stroke:#0b4884,color:#ffffff;
     classDef person fill:#08427b,stroke:#052e56,color:#ffffff;
     classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff;
     class system focus;
     class user,admin person;
-    class poi,osm,mapbox,idp,storage external;
+    class poi,osm,mapbox,idp external;
 ```
 
 ## Что здесь видно
@@ -48,7 +46,5 @@ flowchart TB
 **Внешние геосервисы** — интеграции системы наружу для получения данных о местах, и у нас нет контроля над ними.
 
 **Провайдер авторизации** — внешний OIDC-issuer: логин пользователя и выдача JWT. Система доверяет его ключам (JWKS); проверку подписи токена на каждом запросе делает сама (см. [Containers](c4-container.md)), а не дергает IDP.
-
-**Файловое хранилище** — используется для хранения фотографий, прикреплённых к точкам маршрута, и генерации экспортов маршрута (PDF, изображения).
 
 Как система устроена внутри — в [C4 Containers](c4-container.md).
