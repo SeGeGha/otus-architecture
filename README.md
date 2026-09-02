@@ -44,3 +44,7 @@ MVP-стратегия: сначала агрегация геоданных п�
 | C4 Level 1 — Context    | [`docs/views/c4-context.md`](docs/views/c4-context.md) |
 | C4 Level 2 — Containers | [`docs/views/c4-container.md`](docs/views/c4-container.md) |
 | Записи решений (ADR)    | [`docs/adr/`](docs/adr/) |
+| Возможности и поддомены    | [`docs/04-capabilities.md`](docs/04-capabilities.md) |
+| Границы сервисов           | [`docs/05-service-boundaries.md`](docs/05-service-boundaries.md) |
+| Сплочённость и связанность | [`docs/06-cohesion-coupling.md`](docs/06-cohesion-coupling.md) |
+| Карта сервисов             | [`docs/views/service-map.md`](docs/views/service-map.md) |
