@@ -18,6 +18,7 @@ flowchart TB
     end
 
     idp["🔑 Провайдер авторизации\n(OAuth2 / OIDC)"]
+    delivery["📨 Email / Push-провайдеры\n(доставка уведомлений)"]
 
     user -->|"HTTPS / WebSocket"| system
     admin -->|"HTTPS"| system
@@ -26,13 +27,14 @@ flowchart TB
     system -->|"REST API"| osm
     system -->|"REST API"| mapbox
     system -->|"OIDC: issuer JWT / JWKS"| idp
+    system -->|"SMTP / push API"| delivery
 
     classDef focus fill:#1168bd,stroke:#0b4884,color:#ffffff;
     classDef person fill:#08427b,stroke:#052e56,color:#ffffff;
     classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff;
     class system focus;
     class user,admin person;
-    class poi,osm,mapbox,idp external;
+    class poi,osm,mapbox,idp,delivery external;
 ```
 
 ## Что здесь видно
@@ -46,5 +48,7 @@ flowchart TB
 **Внешние геосервисы** — интеграции системы наружу для получения данных о местах, и у нас нет контроля над ними.
 
 **Провайдер авторизации** — внешний OIDC-issuer: логин пользователя и выдача JWT. Система доверяет его ключам (JWKS); проверку подписи токена на каждом запросе делает сама (см. [Containers](c4-container.md)), а не дергает IDP.
+
+**Email / Push-провайдеры** — внешние каналы доставки: через них система сообщает участнику о приглашении или откате маршрута. Какой именно провайдер — деталь сервиса уведомлений.
 
 Как система устроена внутри — в [C4 Containers](c4-container.md).
