@@ -1,63 +1,101 @@
 # C4, уровень 2 — Containers
 
-У системы одно клиентское приложение, три приложения BFF, один Projection Worker, два хранилища данных, один кеш и один брокер событий.
+Контейнерный вид сведён с [картой сервисов](service-map.md): каждый сервис из [`05-service-boundaries.md`](../05-service-boundaries.md) — отдельная рамка со своими деплой-единицами и своими хранилищами. Общих баз между сервисами нет; общая только шина событий.
 
 ## Диаграмма
 
 ```mermaid
 flowchart TB
     user["👤 Участник маршрута"]
-    admin["👤 Администратор / Модератор"]
+    admin["👤 Модератор"]
 
     subgraph system["Сервис планирования путешествий"]
-        spa["Web App (SPA)\n[JavaScript, браузер]\nUI + локальный Event Store\n(IndexedDB) для офлайн-режима"]
+        spa["Web App (SPA)<br/>[JavaScript, браузер]<br/>UI + локальный Event Store<br/>(IndexedDB) для офлайн-режима"]
 
-        qbff["Query BFF\nАгрегация геоданных,\nчтение маршрутов из Read Model;\nвалидация JWT локально"]
+        subgraph routes["Маршруты (core)"]
+            cbff["Command BFF<br/>Команды маршрута;<br/>запись в Event Store;<br/>реакция на внешние события"]
+            qbff["Query BFF<br/>Чтение маршрута<br/>из Read Model"]
+            rbff["Realtime BFF<br/>WebSocket-сервер;<br/>CRDT-синхронизация правок"]
+            projector["Projection Worker<br/>Построение проекции<br/>из событий маршрута"]
+            eventstore[("Event Store<br/>[PostgreSQL]<br/>Append-only поток событий,<br/>снапшоты — источник истины")]
+            readmodel[("Read Model<br/>[БД]<br/>Проекция текущего состояния<br/>со снимками мест")]
+            pubsub[("Realtime Pub/Sub<br/>[Redis]<br/>Трансляция правок<br/>между узлами Realtime BFF")]
+        end
 
-        cbff["Command BFF\nОбработка команд: создание\nи изменение маршрута;\nзапись в Event Store +\npublish в Kafka;\nвалидация JWT локально"]
+        subgraph geo["Геокаталог (supporting)"]
+            geoapi["Geo Catalog API<br/>Поиск и карточка места;<br/>адаптеры провайдеров,<br/>circuit breaker, кеш L1"]
+            placesdb[("Places DB<br/>[БД]<br/>Нормализованные карточки,<br/>внешний id → placeId")]
+            geocache[("Geo Cache<br/>[Redis]<br/>Кеш L2 ответов провайдеров")]
+        end
 
-        projector["Projection Worker\nConsume событий из Kafka,\nобновление Read Model"]
+        subgraph access["Доступ (supporting)"]
+            accessapi["Access API<br/>Участники, роли,<br/>приглашения, шаринг-ссылки;<br/>решение allow / deny"]
+            accessdb[("Access DB<br/>[БД]")]
+        end
 
-        rbff["Realtime BFF\nWebSocket-сервер;\nCRDT-синхронизация правок;\nJWT при handshake"]
+        subgraph moderation["Модерация (supporting)"]
+            modapi["Moderation API<br/>Жалобы, решения<br/>по маршрутам и нарушителям"]
+            moddb[("Moderation DB<br/>[БД]")]
+        end
 
-        eventstore[("Event Store\n[БД]\nAppend-only поток событий\nмаршрута — аудит, откат,\nисточник истины")]
+        subgraph notify["Уведомления (generic)"]
+            ntfworker["Notification Worker<br/>Приём заявок, выбор канала,<br/>шаблоны, ретраи, DLQ"]
+            ntfdb[("Notification DB<br/>[БД]<br/>Заявки, статусы, шаблоны")]
+        end
 
-        readmodel[("Read Model\n[БД]\nCQRS-проекция:\nденормализованное состояние\nдля быстрого чтения")]
-
-        redis[("Redis\nКеш геоданных L2;\npub/sub шина для\nRealtime BFF")]
-
-        kafka["Kafka\n[брокер событий]\nТрансляция событий\nCommand BFF → Projection Worker"]
+        kafka["Kafka<br/>[брокер событий]<br/>Общая шина; топик<br/>принадлежит издателю"]
     end
 
     subgraph geoproviders["Внешние геопровайдеры"]
-        poi["Google Places / Foursquare\n(POI)"]
-        osm["OpenStreetMap\n(геоданные)"]
-        mapbox["Mapbox\n(геокодинг, роутинг)"]
+        poi["Google Places / Foursquare<br/>(POI)"]
+        osm["OpenStreetMap<br/>(геоданные)"]
+        mapbox["Mapbox<br/>(геокодинг, роутинг)"]
     end
 
-    idp["🔑 Провайдер авторизации\n(OAuth2 / OIDC)\nвыдаёт JWT"]
+    idp["🔑 Провайдер авторизации<br/>(OAuth2 / OIDC)<br/>выдаёт JWT"]
+    delivery["📨 Email / Push-провайдеры"]
 
     user -->|"HTTPS"| spa
     admin -->|"HTTPS"| spa
+    spa -->|"OIDC login"| idp
 
-    spa -->|"OIDC login\n(получить JWT)"| idp
-    spa -->|"REST + JWT\n(чтение маршрутов, геоданные)"| qbff
-    spa -->|"REST + JWT\n(создать / изменить маршрут)"| cbff
-    spa <-->|"WebSocket + JWT\n(правки в реальном времени)"| rbff
-
-    qbff -->|"REST API"| poi
-    qbff -->|"REST API"| osm
-    qbff -->|"REST API"| mapbox
-    qbff -->|"кеш L2 (get/set)"| redis
-    qbff -->|"чтение текущего\nсостояния маршрута"| readmodel
+    spa -->|"REST: открыть маршрут"| qbff
+    spa -->|"REST: команды маршрута"| cbff
+    spa <-->|"WebSocket: живые правки"| rbff
+    spa -->|"REST: поиск мест"| geoapi
+    spa -->|"REST: приглашения, роли, ссылки"| accessapi
+    spa -->|"REST: жалобы, решения"| modapi
 
     cbff -->|"append событий"| eventstore
-    cbff -->|"publish (новое событие)"| kafka
-
-    kafka -->|"consume"| projector
+    qbff -->|"чтение"| readmodel
     projector -->|"обновление проекции"| readmodel
+    rbff <-->|"pub/sub"| pubsub
 
-    rbff -->|"pub/sub\n(трансляция правок\nмежду узлами BFF)"| redis
+    cbff -->|"контракт: можно ли править"| accessapi
+    rbff -->|"контракт: можно ли править<br/>(при handshake)"| accessapi
+    qbff -->|"контракт: можно ли читать"| accessapi
+    cbff -->|"контракт: GET /places/{placeId}"| geoapi
+
+    geoapi --> placesdb
+    geoapi -->|"get / set"| geocache
+    geoapi -->|"Геопровайдер"| poi
+    geoapi -->|"Геопровайдер"| osm
+    geoapi -->|"Геопровайдер"| mapbox
+
+    accessapi --> accessdb
+    modapi --> moddb
+    ntfworker --> ntfdb
+    ntfworker -->|"SMTP / push API"| delivery
+
+    cbff -.->|"события маршрута,<br/>RouteRolledBack"| kafka
+    geoapi -.->|"PlaceUpdated"| kafka
+    accessapi -.->|"ParticipantInvited"| kafka
+    modapi -.->|"RouteHidden, UserBlocked"| kafka
+
+    kafka -.->|"события маршрута"| projector
+    kafka -.->|"RouteHidden, PlaceUpdated"| cbff
+    kafka -.->|"UserBlocked"| accessapi
+    kafka -.->|"ParticipantInvited,<br/>RouteRolledBack"| ntfworker
 
     classDef app fill:#438dd5,stroke:#2e6295,color:#ffffff;
     classDef spa fill:#23b26d,stroke:#178049,color:#ffffff;
@@ -65,42 +103,87 @@ flowchart TB
     classDef broker fill:#d45c13,stroke:#a03a00,color:#ffffff;
     classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff;
     classDef person fill:#08427b,stroke:#052e56,color:#ffffff;
-    class qbff,cbff,rbff,projector app;
+    class cbff,qbff,rbff,projector,geoapi,accessapi,modapi,ntfworker app;
     class spa spa;
-    class eventstore,readmodel,redis db;
+    class eventstore,readmodel,pubsub,placesdb,geocache,accessdb,moddb,ntfdb db;
     class kafka broker;
     class user,admin person;
-    class poi,osm,mapbox,idp external;
+    class poi,osm,mapbox,idp,delivery external;
 ```
 
-## Контейнеры и откуда их требования
+Сплошная стрелка — синхронный вызов, пунктирная — асинхронное событие через Kafka. Обозначения те же, что на [карте сервисов](service-map.md).
+
+## Контейнеры по сервисам
+
+| Сервис | Контейнеры | Хранилища |
+|---|---|---|
+| Маршруты (core) | Command BFF, Query BFF, Realtime BFF, Projection Worker | Event Store, Read Model, Realtime Pub/Sub |
+| Геокаталог | Geo Catalog API | Places DB, Geo Cache |
+| Доступ | Access API | Access DB |
+| Модерация | Moderation API | Moderation DB |
+| Уведомления | Notification Worker | Notification DB |
+| Авторизация | — (внешний IdP) | — |
+
+Ни одно хранилище не встречается в двух строках — это та же проверка, что и в [карте владения данными](../05-service-boundaries.md#карта-владения-данными).
 
 **Web App (SPA)** — клиентское приложение в браузере. Разворачивается на CDN, не содержит серверной логики. Внутри SPA — локальный Event Store на IndexedDB для офлайн-режима (D2, S5): без сети правки копятся локально, при восстановлении соединения уходят на Command BFF. Один UI и для участников, и для модераторов (разные права в JWT / claims).
 
-**Command BFF** — «пишущий» BFF. Принимает команды (создать маршрут, добавить точку, откатить версию, заблокировать пользователя — для модератора), пишет событие в Event Store и публикует его в Kafka. Сам Read Model не обновляет — это делает Projection Worker. Разделение Command/Query — CQRS (D3, D4; [03-trade-offs.md](../03-trade-offs.md), [ADR-0001](../adr/0001-event-sourcing-cqrs.md)).
+### Маршруты
 
-**Projection Worker** — отдельный сервис-подписчик. Читает события из Kafka и обновляет Read Model. В IDP и к пользователям не ходит — у него нет пользовательских запросов. Вынесен из Command BFF, чтобы запись и построение проекции масштабировались независимо. Отставание проекции ≤ 2 с допустимо.
+Четыре контейнера одного вертикального среза: все обслуживают одну ответственность и меняются по одной причине ([06](../06-cohesion-coupling.md#1-маршруты)).
 
-**Query BFF** — «читающий» BFF. Параллельно опрашивает гео-провайдеров (Google Places, OpenStreetMap, Mapbox), нормализует форматы, обогащает маршрут и отдаёт единый ответ. Геоданные кешируются в Redis (L2). При отказе провайдера — отвечает из кеша с пометкой «устаревшие данные» (circuit breaker, D1, S1 и S4).
+**Command BFF** — «пишущий» BFF. Принимает команды (создать маршрут, добавить точку, откатить версию), спрашивает у Доступа «можно ли править», пишет событие в Event Store и публикует его в Kafka. При добавлении точки получает карточку у Геокаталога по контракту `GET /places/{placeId}` и сохраняет снимок отображаемых полей в событии — в кеш Геокаталога не ходит ([Риск 2](../06-cohesion-coupling.md#риск-2-маршруты-сами-лезут-в-кеш-геокаталога)). Кроме того, слушает чужие события и переводит их в события маршрута: `RouteHidden` → маршрут снят с публикации, `PlaceUpdated` → решение, обновлять ли снимок. Разделение Command/Query — CQRS (D3, D4; [03-trade-offs.md](../03-trade-offs.md), [ADR-0001](../adr/0001-event-sourcing-cqrs.md)).
 
-**Realtime BFF** — держит WebSocket-соединения. Правки транслируются через Redis pub/sub между узлами (D4, S2, S3).
+**Projection Worker** — подписчик на события маршрута. Обновляет Read Model; к пользователям и в IdP не ходит. Вынесен из Command BFF, чтобы запись и построение проекции масштабировались независимо. Отставание проекции ≤ 2 с допустимо (S10).
+
+**Query BFF** — «читающий» BFF. Отдаёт маршрут из Read Model вместе со снимками мест, поэтому при открытии маршрута Геокаталог не дёргает (S1). Перед ответом спрашивает у Доступа «можно ли читать» — это же покрывает открытие по шаринг-ссылке.
+
+**Realtime BFF** — держит WebSocket-соединения. Право на правку проверяет у Доступа при handshake. Правки транслируются через Redis pub/sub между узлами (D4, S2, S3).
 
 **Event Store** — источник истины. Append-only: события только добавляются. Откат — новое событие в логе. Снапшоты ускоряют восстановление (D3, S6 и S7).
 
-**Read Model** — CQRS-проекция текущего состояния маршрута. Обновляется Projection Worker'ом из Kafka; Query BFF читает отсюда. Отставание ≤ 2 с допустимо; выгода — загрузка ≤ 500 мс без replay истории (S1).
+**Read Model** — CQRS-проекция текущего состояния маршрута. Обновляется Projection Worker'ом; Query BFF читает отсюда. Выгода — загрузка ≤ 500 мс без replay истории (S1).
 
-**Redis** — кеш геоданных L2 для Query BFF и pub/sub для Realtime BFF.
+**Realtime Pub/Sub** — Redis только для шины правок между узлами Realtime BFF. С кешем Геокаталога не делится.
 
-**Kafka** — шина: Command BFF публикует, Projection Worker потребляет.
+### Геокаталог
 
-**Провайдер авторизации (OAuth2 / OIDC)** — выдаёт JWT при логине. На схеме с BFF **не** ходит на каждый запрос: BFF валидируют JWT сами. Редко (не нарисовано) BFF обновляют JWKS с IDP при ротации ключей.
+**Geo Catalog API** — единственный контейнер, который знает провайдеров ([Риск 1](../06-cohesion-coupling.md#риск-1-каждый-сервис-сам-ходит-в-геопровайдеры)). Параллельно опрашивает Google Places, OpenStreetMap и Mapbox, нормализует ответы в карточку места за ≤ 500 мс (S9). При отказе провайдера отвечает из кеша с пометкой «данные могут быть устаревшими» (circuit breaker, D1, S4). Отдаёт поиск участнику в UI и карточку `GET /places/{placeId}` Маршрутам. Когда провайдер поправил данные, публикует `PlaceUpdated`.
+
+**Places DB** — нормализованные карточки и соответствие внешнего id внутреннему `placeId`.
+
+**Geo Cache** — Redis, кеш L2 ответов провайдеров с TTL под тип данных.
+
+### Доступ
+
+**Access API** — решает, кто какой маршрут видит и меняет: отвечает `allow | deny` на запросы трёх BFF Маршрутов, принимает от SPA команды «пригласить», «выдать роль», «выпустить ссылку». Приглашение не доставляет сам — публикует `ParticipantInvited`. Слушает `UserBlocked` и отзывает права заблокированного.
+
+**Access DB** — участники, роли, приглашения, шаринг-токены.
+
+### Модерация
+
+**Moderation API** — принимает жалобы участников и решения модератора. Маршрут не редактирует и писем не шлёт: наружу уходят только события `RouteHidden` и `UserBlocked`, применяют их Маршруты и Доступ.
+
+**Moderation DB** — решения, причины, блокировки.
+
+### Уведомления
+
+**Notification Worker** — без публичного API: заявки приходят событиями (`ParticipantInvited`, `RouteRolledBack`) вместе с получателем. Выбирает канал, подставляет шаблон, отправляет через внешних Email / Push-провайдеров, повторяет при сбоях, неудачи уводит в DLQ. Статусы доставки обратно никто не читает.
+
+**Notification DB** — заявки, история статусов, шаблоны, маршрутизация «канал → провайдер».
+
+### Общее
+
+**Kafka** — общая шина платформы. Это инфраструктура, а не общая база: у каждого топика один издатель, схема события — его контракт. Подписчик не знает, как устроено хранилище издателя.
+
+**Провайдер авторизации (OAuth2 / OIDC)** — выдаёт JWT при логине. Сервисы с IdP на каждый запрос **не** ходят: каждый контейнер с внешним API валидирует JWT сам. Своего контейнера у «Авторизации» нет — мы владеем только контрактом проверки JWT.
 
 ## Что не нарисовано и почему
 
-- **Circuit breaker и ACL-адаптеры к провайдерам** — компоненты внутри Query BFF.
+- **Circuit breaker, ACL-адаптеры провайдеров, L1 in-memory кеш** — компоненты внутри Geo Catalog API.
 - **CRDT-движок (Yjs / Automerge)** — библиотека внутри Realtime BFF и SPA.
 - **Снапшот-сервис** — фоновый поток внутри Command BFF.
-- **Transactional Outbox** — деталь dual write (Event Store + Kafka) внутри Command BFF.
-- **L1 in-memory кеш** — внутри Query BFF.
-- **Валидация JWT / JWKS-клиент** — middleware внутри каждого BFF; редкий fetch JWKS с IDP не рисуем как постоянную связь.
+- **Transactional Outbox** — у каждого издателя (Command BFF, Geo Catalog API, Access API, Moderation API): запись в свою БД и публикация в Kafka без dual write.
+- **Валидация JWT / JWKS-клиент** — middleware внутри каждого контейнера с внешним API; редкий fetch JWKS с IdP не рисуем как постоянную связь.
+- **API Gateway / маршрутизация запросов SPA** — на этом уровне не принципиальна; SPA показан обращающимся к контейнерам напрямую.
 - **Админ-панель модератора** — тот же SPA с другими claims в JWT.
