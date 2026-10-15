@@ -17,6 +17,7 @@ flowchart TB
             qbff["Query BFF<br/>Чтение маршрута<br/>из Read Model"]
             rbff["Realtime BFF<br/>WebSocket-сервер;<br/>CRDT-синхронизация правок"]
             projector["Projection Worker<br/>Построение проекции<br/>из событий маршрута"]
+            renderer["Public Page Renderer<br/>Статический HTML публичных<br/>маршрутов (ISR по событиям)"]
             eventstore[("Event Store<br/>[PostgreSQL]<br/>Append-only поток событий,<br/>снапшоты — источник истины")]
             readmodel[("Read Model<br/>[БД]<br/>Проекция текущего состояния<br/>со снимками мест")]
             pubsub[("Realtime Pub/Sub<br/>[Redis]<br/>Трансляция правок<br/>между узлами Realtime BFF")]
@@ -54,9 +55,11 @@ flowchart TB
 
     idp["🔑 Провайдер авторизации<br/>(OAuth2 / OIDC)<br/>выдаёт JWT"]
     delivery["📨 Email / Push-провайдеры"]
+    cdn["🌐 CDN<br/>Оболочка и чанки SPA;<br/>HTML публичных маршрутов"]
 
     user -->|"HTTPS"| spa
     admin -->|"HTTPS"| spa
+    user -->|"HTTPS: публичная<br/>страница маршрута"| cdn
     spa -->|"OIDC login"| idp
 
     spa -->|"REST: открыть маршрут"| qbff
@@ -69,6 +72,8 @@ flowchart TB
     cbff -->|"append событий"| eventstore
     qbff -->|"чтение"| readmodel
     projector -->|"обновление проекции"| readmodel
+    renderer -->|"чтение"| readmodel
+    renderer -->|"публикация HTML,<br/>сброс скрытых"| cdn
     rbff <-->|"pub/sub"| pubsub
 
     cbff -->|"контракт: можно ли править"| accessapi
@@ -93,6 +98,7 @@ flowchart TB
     modapi -.->|"RouteHidden, UserBlocked"| kafka
 
     kafka -.->|"события маршрута"| projector
+    kafka -.->|"опубликован, откачен,<br/>снят с публикации, правки"| renderer
     kafka -.->|"RouteHidden, PlaceUpdated"| cbff
     kafka -.->|"UserBlocked"| accessapi
     kafka -.->|"ParticipantInvited,<br/>RouteRolledBack"| ntfworker
@@ -103,12 +109,12 @@ flowchart TB
     classDef broker fill:#d45c13,stroke:#a03a00,color:#ffffff;
     classDef external fill:#999999,stroke:#6b6b6b,color:#ffffff;
     classDef person fill:#08427b,stroke:#052e56,color:#ffffff;
-    class cbff,qbff,rbff,projector,geoapi,accessapi,modapi,ntfworker app;
+    class cbff,qbff,rbff,projector,renderer,geoapi,accessapi,modapi,ntfworker app;
     class spa spa;
     class eventstore,readmodel,pubsub,placesdb,geocache,accessdb,moddb,ntfdb db;
     class kafka broker;
     class user,admin person;
-    class poi,osm,mapbox,idp,delivery external;
+    class poi,osm,mapbox,idp,delivery,cdn external;
 ```
 
 Сплошная стрелка — синхронный вызов, пунктирная — асинхронное событие через Kafka. Обозначения те же, что на [карте сервисов](service-map.md).
@@ -117,7 +123,7 @@ flowchart TB
 
 | Сервис | Контейнеры | Хранилища |
 |---|---|---|
-| Маршруты (core) | Command BFF, Query BFF, Realtime BFF, Projection Worker | Event Store, Read Model, Realtime Pub/Sub |
+| Маршруты (core) | Command BFF, Query BFF, Realtime BFF, Projection Worker, Public Page Renderer | Event Store, Read Model, Realtime Pub/Sub |
 | Геокаталог | Geo Catalog API | Places DB, Geo Cache |
 | Доступ | Access API | Access DB |
 | Модерация | Moderation API | Moderation DB |
@@ -126,11 +132,11 @@ flowchart TB
 
 Ни одно хранилище не встречается в двух строках — это та же проверка, что и в [карте владения данными](../05-service-boundaries.md#карта-владения-данными).
 
-**Web App (SPA)** — клиентское приложение в браузере. Разворачивается на CDN, не содержит серверной логики. Внутри SPA — локальный Event Store на IndexedDB для офлайн-режима (D2, S5): без сети правки копятся локально, при восстановлении соединения уходят на Command BFF. Один UI и для участников, и для модераторов (разные права в JWT / claims).
+**Web App (SPA)** — клиентское приложение в браузере. Разворачивается на CDN, не содержит серверной логики. Внутри SPA — локальный Event Store на IndexedDB для офлайн-режима (D2, S5): без сети правки копятся локально, при восстановлении соединения уходят на Command BFF. Один UI и для участников, и для модераторов (разные права в JWT / claims). Рендеринг клиентский (CSR); картографический движок, ядро редактора (CRDT, WebSocket, офлайн-слой) и панель модератора — отдельные чанки, которые грузятся по требованию ([ADR-0002](../adr/0002-rendering-csr-editor-isr-public-page.md)).
 
 ### Маршруты
 
-Четыре контейнера одного вертикального среза: все обслуживают одну ответственность и меняются по одной причине ([06](../06-cohesion-coupling.md#1-маршруты)).
+Пять контейнеров одного вертикального среза: все обслуживают одну ответственность и меняются по одной причине ([06](../06-cohesion-coupling.md#1-маршруты)).
 
 **Command BFF** — «пишущий» BFF. Принимает команды (создать маршрут, добавить точку, откатить версию), спрашивает у Доступа «можно ли править», пишет событие в Event Store и публикует его в Kafka. При добавлении точки получает карточку у Геокаталога по контракту `GET /places/{placeId}` и сохраняет снимок отображаемых полей в событии — в кеш Геокаталога не ходит ([Риск 2](../06-cohesion-coupling.md#риск-2-маршруты-сами-лезут-в-кеш-геокаталога)). Кроме того, слушает чужие события и переводит их в события маршрута: `RouteHidden` → маршрут снят с публикации, `PlaceUpdated` → решение, обновлять ли снимок. Разделение Command/Query — CQRS (D3, D4; [03-trade-offs.md](../03-trade-offs.md), [ADR-0001](../adr/0001-event-sourcing-cqrs.md)).
 
@@ -139,6 +145,8 @@ flowchart TB
 **Query BFF** — «читающий» BFF. Отдаёт маршрут из Read Model вместе со снимками мест, поэтому при открытии маршрута Геокаталог не дёргает (S1). Перед ответом спрашивает у Доступа «можно ли читать» — это же покрывает открытие по шаринг-ссылке.
 
 **Realtime BFF** — держит WebSocket-соединения. Право на правку проверяет у Доступа при handshake. Правки транслируются через Redis pub/sub между узлами (D4, S2, S3).
+
+**Public Page Renderer** — рендерит публичную страницу маршрута в статический HTML и публикует её на CDN ([ADR-0002](../adr/0002-rendering-csr-editor-isr-public-page.md)). Слушает события маршрута: опубликован — сгенерировать, откачен или поправлен — перегенерировать (правки не чаще раза в несколько минут), снят с публикации — сразу сбросить страницу с CDN. Данные берёт из Read Model, к пользователям не ходит: публичную страницу отдаёт CDN.
 
 **Event Store** — источник истины. Append-only: события только добавляются. Откат — новое событие в логе. Снапшоты ускоряют восстановление (D3, S6 и S7).
 
@@ -174,6 +182,8 @@ flowchart TB
 
 ### Общее
 
+**CDN** — внешняя сеть доставки. Отдаёт оболочку и чанки SPA и готовый HTML публичных маршрутов; если страница маршрута ещё не сгенерирована, отдаёт оболочку SPA, и маршрут открывается через CSR.
+
 **Kafka** — общая шина платформы. Это инфраструктура, а не общая база: у каждого топика один издатель, схема события — его контракт. Подписчик не знает, как устроено хранилище издателя.
 
 **Провайдер авторизации (OAuth2 / OIDC)** — выдаёт JWT при логине. Сервисы с IdP на каждый запрос **не** ходят: каждый контейнер с внешним API валидирует JWT сам. Своего контейнера у «Авторизации» нет — мы владеем только контрактом проверки JWT.
@@ -186,4 +196,5 @@ flowchart TB
 - **Transactional Outbox** — у каждого издателя (Command BFF, Geo Catalog API, Access API, Moderation API): запись в свою БД и публикация в Kafka без dual write.
 - **Валидация JWT / JWKS-клиент** — middleware внутри каждого контейнера с внешним API; редкий fetch JWKS с IdP не рисуем как постоянную связь.
 - **API Gateway / маршрутизация запросов SPA** — на этом уровне не принципиальна; SPA показан обращающимся к контейнерам напрямую.
-- **Админ-панель модератора** — тот же SPA с другими claims в JWT.
+- **Админ-панель модератора** — тот же SPA с другими claims в JWT, отдельный чанк.
+- **Чанки SPA** (карта, ядро редактора, панель модератора) — части одного артефакта на CDN, не отдельные контейнеры.
