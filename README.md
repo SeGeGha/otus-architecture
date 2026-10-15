@@ -48,3 +48,5 @@ MVP-стратегия: сначала агрегация геоданных п�
 | Границы сервисов           | [`docs/05-service-boundaries.md`](docs/05-service-boundaries.md) |
 | Сплочённость и связанность | [`docs/06-cohesion-coupling.md`](docs/06-cohesion-coupling.md) |
 | Карта сервисов             | [`docs/views/service-map.md`](docs/views/service-map.md) |
+| Event Storming и Bounded Context | [`docs/07-event-storming.md`](docs/07-event-storming.md) |
+| Context Map                      | [`docs/views/context-map.md`](docs/views/context-map.md) |

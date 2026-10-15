@@ -1,6 +1,6 @@
 # Карта сервисов
 
-Здесь всё, что разобрано в `[04-capabilities.md](../04-capabilities.md)`, `[05-service-boundaries.md](../05-service-boundaries.md)` и `[06-cohesion-coupling.md](../06-cohesion-coupling.md)`, сведено в одну картинку. Сервисы, чем каждый владеет и что передаётся по связям.
+Здесь всё, что разобрано в [`04-capabilities.md`](../04-capabilities.md), [`05-service-boundaries.md`](../05-service-boundaries.md) и [`06-cohesion-coupling.md`](../06-cohesion-coupling.md), сведено в одну картинку. Сервисы, чем каждый владеет и что передаётся по связям.
 
 ## Диаграмма
 
@@ -31,7 +31,7 @@ flowchart TB
     user --> ACS
     admin --> MOD
 
-    RTE -->|"контракт:<br/>можно ли править"| ACS
+    RTE -->|"контракт:<br/>можно ли читать / править"| ACS
     RTE -->|"контракт:<br/>карточка места"| GEO
     ACS -.->|"событие:<br/>участник приглашён"| NTF
     RTE -.->|"событие:<br/>маршрут откатился"| NTF
@@ -42,7 +42,8 @@ flowchart TB
     GEO -->|Геопровайдер| POI
     GEO -->|Геопровайдер| OSM
     GEO -->|Геопровайдер| MBX
-    user -->|"OIDC login"| IDP
+    user -->|"OIDC login"| AUTH
+    AUTH -->|"делегирует"| IDP
 
     classDef core fill:#1168bd,stroke:#0b4884,color:#ffffff;
     classDef supporting fill:#438dd5,stroke:#2e6295,color:#ffffff;
@@ -54,3 +55,5 @@ flowchart TB
 Сплошная стрелка — синхронный вызов по контракту, пунктирная — асинхронное событие. Цвет показывает тип поддомена: тёмно-синий core, светлее supporting, самый светлый generic.
 
 Токен авторизации проверяет каждый сервис на входе, и если нарисовать все связи, получится пачка линий, которые перечеркнут схему и ничего не объяснят.
+
+«Авторизация» на карте — не наш код: её реализует внешний IdP, мы владеем только контрактом проверки JWT.
